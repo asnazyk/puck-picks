@@ -1,14 +1,7 @@
-# node & build artifacts
-node_modules/
-.next/
-.out/
-dist/
-build/
-
 # env & local config
 .env
 .env.*
-!.env.example
+env.local
 
 # logs
 npm-debug.log*
@@ -19,11 +12,13 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 
+# build + deps
+node_modules/
+.next/
+
+# ignore next swc native binaries (prevents 100MB+ files)
+node_modules/next/sw*/**/*.node
+node_modules/@next/swc-*/**/*.node
+
 # Supabase temp
 supabase/.temp
-
-# ignore next swc native binary
-node_modules/next/sw*/**/*.node
-
-# ignore next swc native binary
-node_modules/next/sw*/**/*.node
