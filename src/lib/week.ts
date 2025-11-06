@@ -1,0 +1,3 @@
+export const WEEK1_START_ISO='2025-11-06';const TZ_OFFSET='-05:00';
+export function getPoolWeek(d=new Date()){const base=new Date(`${WEEK1_START_ISO}T00:00:00${TZ_OFFSET}`);const ms=d.getTime()-base.getTime();if(ms<0)return 1;const days=Math.floor(ms/86400000);return Math.floor(days/7)+1}
+export function getCurrentWeekRange(d=new Date()){const w=getPoolWeek(d);const base=new Date(`${WEEK1_START_ISO}T00:00:00${TZ_OFFSET}`);const s=new Date(base.getTime()+(w-1)*7*86400000);const e=new Date(s.getTime()+3*86400000);const iso=(x:Date)=>x.toISOString().slice(0,10);return{startISO:iso(s),endISO:iso(e)}}

@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+/* Base layout */
+html, body, #__next {
+  height: 100%;
+}
+
+/* Main body styling */
+body {
+  @apply bg-white text-slate-900 antialiased;
+}
+
+/* Optional utility classes for your layout */
+.table-wrap {
+  @apply overflow-x-auto sm:-mx-4 sm:px-4;
+}
+
+th, .td {
+  @apply px-3 py-2 align-middle;
+}
+
+h1 {
+  @apply text-left text-xs font-semibold uppercase tracking-wide text-slate-500;
+}
+
+.card {
+  @apply bg-white rounded-2xl shadow border border-slate-200;
+}
