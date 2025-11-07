@@ -1,7 +1,23 @@
-import Link from 'next/link'
-import { supabase } from '@/lib/supabase'
-import { getPoolWeek, getCurrentWeekRange } from '@/lib/week'
-export const dynamic='force-dynamic'
-async function getStandings(){const{data,error}=await supabase.from('v_standings').select('*');if(error)throw error;return data as any[]}
-async function getWeekly(week:number){const{data,error}=await supabase.from('team_week_stats').select('team_id,goals,assists,correct_picks,teams(name)').eq('week',week);if(error)throw error;return (data as any[]).map(d=>({team_id:d.team_id,team_name:d.teams.name,goals:d.goals??0,assists:d.assists??0,correct_picks:d.correct_picks??0,total:(d.goals??0)*4+(d.assists??0)*2+(d.correct_picks??0)})).sort((a,b)=>b.total-a.total||b.goals-a.goals||b.assists-a.assists)}
-export default async function Home(){const week=getPoolWeek();const{startISO,endISO}=getCurrentWeekRange();const[standings,weekly]=await Promise.all([getStandings(),getWeekly(week)]);return(<main className='main'><section className='section'><div className='flex items-center justify-between'><h1 className='h1'>Overall Results</h1><Link href='/standings' className='text-sm underline'>Full standings</Link></div><div className='card table-wrap'><table className='table'><thead><tr><th className='th'>Team</th><th className='th text-right'>W</th><th className='th text-right'>L</th><th className='th text-right'>Goals</th><th className='th text-right'>Assists</th><th className='th text-right'>Correct Picks</th><th className='th text-right'>Points (4/2/1)</th></tr></thead><tbody>{standings.length===0&&(<tr><td className='td subtle' colSpan={7}>No data yet.</td></tr>)}{standings.map((r,i)=>(<tr key={r.team_id} className='border-t border-black/5'><td className='td font-medium'>{i+1}. {r.team_name}</td><td className='td td-num'>{r.wins}</td><td className='td td-num'>{r.losses}</td><td className='td td-num'>{r.goals}</td><td className='td td-num'>{r.assists}</td><td className='td td-num'>{r.correct_picks}</td><td className='td td-num font-semibold'>{r.points_total}</td></tr>))}</tbody></table></div></section><section className='section'><h2 className='h2'>Weekly Results</h2><p className='subtle'>Week {week} · {startISO}–{endISO} (Thu–Sun)</p><div className='card table-wrap'><table className='table'><thead><tr><th className='th'>Team</th><th className='th text-right'>Goals</th><th className='th text-right'>Assists</th><th className='th text-right'>Correct Picks</th><th className='th text-right'>Total (4/2/1)</th></tr></thead><tbody>{weekly.length===0&&(<tr><td className='td subtle' colSpan={5}>No weekly results yet.</td></tr>)}{weekly.map((r,i)=>(<tr key={r.team_id} className='border-t border-black/5'><td className='td font-medium'>{i+1}. {r.team_name}</td><td className='td td-num'>{r.goals}</td><td className='td td-num'>{r.assists}</td><td className='td td-num'>{r.correct_picks}</td><td className='td td-num font-semibold'>{r.total}</td></tr>))}</tbody></table></div></section></main>)}
+export default function Home() {
+  return (
+    <section className="space-y-6">
+      <h1 className="text-3xl font-semibold tracking-tight">This Week’s Leaders</h1>
+      <p className="text-slate-600 text-sm">
+        Connect Supabase and seed a week to see live goals and assists totals here.
+      </p>
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {[...Array(3)].map((_, i) => (
+          <div key={i} className="rounded-2xl border shadow-sm p-6 bg-white">
+            <div className="text-sm text-slate-500">Team</div>
+            <div className="text-xl font-semibold">—</div>
+            <div className="mt-4 flex gap-8">
+              <div><div className="text-2xl font-bold">0</div><div className="text-xs text-slate-500">Goals</div></div>
+              <div><div className="text-2xl font-bold">0</div><div className="text-xs text-slate-500">Assists</div></div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}

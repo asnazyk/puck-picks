@@ -1,3 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* optional brand tokens */
+:root{
+  --brand: 27 96% 55%;     /* hue-sat-lightness for hsl() */
+  --ink: 222 47% 11%;
+  --muted: 215 20% 65%;
+  --bg: 0 0% 100%;
+}
+body { color: hsl(var(--ink)); background: hsl(var(--bg)); }
+
 @import "tailwindcss";
 
 /* Base layout */
