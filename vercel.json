@@ -1,0 +1,6 @@
+{
+  "crons": [
+    { "path": "/api/update-today", "schedule": "*/15 * * * THU,FRI,SAT,SUN" },
+    { "path": "/api/update-stats", "schedule": "0 10 * * MON" }
+  ]
+}
