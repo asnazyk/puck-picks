@@ -29,12 +29,26 @@ export default async function TeamDetail({ params }: { params: { slug: string } 
   const week = 1;
 
   // Totals (from view)
-  const { data: totals } = await supabase
-    .from("v_team_week_totals")
-    .select("goals, assists, week")
-    .eq("team_id", team.id)
-    .eq("week", week)
-    .maybeSingle();
+// ... after fetching team ...
+// compute same league week index on server (simple: reuse current week view by choosing MAX available for team)
+const { data: scoreRow } = await supabase
+  .from("v_team_week_scores")
+  .select("week, goals, assists, correct_picks, score")
+  .eq("team_id", team.id)
+  .order("week", { ascending: false })
+  .limit(1)
+  .maybeSingle();
+
+<section className="rounded-2xl border p-6 bg-white">
+  <h2 className="text-lg font-semibold mb-2">This Week (Thu–Sun)</h2>
+  <div className="grid grid-cols-4 gap-6">
+    <div><div className="text-3xl font-bold">{scoreRow?.goals ?? 0}</div><div className="text-xs text-slate-500">Goals (×6)</div></div>
+    <div><div className="text-3xl font-bold">{scoreRow?.assists ?? 0}</div><div className="text-xs text-slate-500">Assists (×3)</div></div>
+    <div><div className="text-3xl font-bold">{scoreRow?.correct_picks ?? 0}</div><div className="text-xs text-slate-500">Correct Picks (×1)</div></div>
+    <div><div className="text-3xl font-bold">{scoreRow?.score ?? 0}</div><div className="text-xs text-slate-500">Total</div></div>
+  </div>
+</section>
+
 
   // Active roster
   const { data: roster } = await supabase
