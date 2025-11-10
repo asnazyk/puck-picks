@@ -1,94 +1,95 @@
-import { supabase } from "@/lib/supabase";
-import Link from "next/link";
+// src/app/teams/[slug]/page.tsx
+import { createClient } from '@supabase/supabase-js';
+import Link from 'next/link';
 
-type Team = {
-  id: string;
-  name: string;
-  owner: string | null;
-  slug: string;
+// simple util – keep in sync with db epoch if you change it
+function getCurrentWeekIndex(date = new Date()): number {
+  const epoch = Date.UTC(2024, 8, 26); // 2024-09-26 (Thu)
+  const d = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+  const msPerWeek = 7 * 24 * 60 * 60 * 1000;
+  return Math.floor((d - epoch) / msPerWeek);
+}
+
+type Totals = {
+  goals: number;
+  assists: number;
+  player_points: number;
+  pick_points: number;
+  total_points: number;
 };
 
-export default async function TeamDetail({ params }: { params: { slug: string } }) {
-  // Fetch team info
-  const { data: team, error: teamErr } = await supabase
-    .from("teams")
-    .select("id, name, owner, slug")
-    .eq("slug", params.slug)
-    .single<Team>();
+async function getTotalsForUser(userId: string, weekIndex: number): Promise<Totals> {
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
 
-  if (teamErr || !team) {
-    return (
-      <main className="space-y-4 p-6">
-        <Link href="/teams" className="text-sm underline">← Back to Teams</Link>
-        <p className="text-red-600">Team not found.</p>
-      </main>
-    );
+  const { data, error } = await supabase
+    .from('weekly_standings')
+    .select('goals,assists,player_points,pick_points,total_points')
+    .eq('user_id', userId)
+    .eq('week_index', weekIndex)
+    .maybeSingle();
+
+  if (error) {
+    // return zeros instead of throwing to keep the page building
+    return { goals: 0, assists: 0, player_points: 0, pick_points: 0, total_points: 0 };
   }
 
-  // For now, show week 1
-  const week = 1;
+  if (!data) {
+    return { goals: 0, assists: 0, player_points: 0, pick_points: 0, total_points: 0 };
+  }
 
-  // Totals (from view)
-// ... after fetching team ...
-// compute same league week index on server (simple: reuse current week view by choosing MAX available for team)
-const { data: scoreRow } = await supabase
-  .from("v_team_week_scores")
-  .select("week, goals, assists, correct_picks, score")
-  .eq("team_id", team.id)
-  .order("week", { ascending: false })
-  .limit(1)
-  .maybeSingle();
+  return data as Totals;
+}
 
-<section className="rounded-2xl border p-6 bg-white">
-  <h2 className="text-lg font-semibold mb-2">This Week (Thu–Sun)</h2>
-  <div className="grid grid-cols-4 gap-6">
-    <div><div className="text-3xl font-bold">{scoreRow?.goals ?? 0}</div><div className="text-xs text-slate-500">Goals (×6)</div></div>
-    <div><div className="text-3xl font-bold">{scoreRow?.assists ?? 0}</div><div className="text-xs text-slate-500">Assists (×3)</div></div>
-    <div><div className="text-3xl font-bold">{scoreRow?.correct_picks ?? 0}</div><div className="text-xs text-slate-500">Correct Picks (×1)</div></div>
-    <div><div className="text-3xl font-bold">{scoreRow?.score ?? 0}</div><div className="text-xs text-slate-500">Total</div></div>
-  </div>
-</section>
-
-
-  // Active roster
-  const { data: roster } = await supabase
-    .from("roster")
-    .select("player_id, players(name, position, team_abbr)")
-    .eq("team_id", team.id)
-    .eq("active", true);
+export default async function TeamPage({ params }: { params: { slug: string } }) {
+  // Your slug should ultimately map to a user/team owner.
+  // For now we assume slug is the user_id (UUID) to keep this compiling.
+  const userId = params.slug;
+  const weekIndex = getCurrentWeekIndex();
+  const totals = await getTotalsForUser(userId, weekIndex);
 
   return (
-    <main className="space-y-6 p-6">
-      <Link href="/teams" className="text-sm underline">← Back to Teams</Link>
-
-      <header className="space-y-1">
-        <h1 className="text-2xl font-semibold">{team.name}</h1>
-        {team.owner && <p className="text-sm text-slate-500">Owner: {team.owner}</p>}
+    <main className="max-w-5xl mx-auto p-6">
+      <header className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold">Team</h1>
+        <Link href="/" className="text-sm underline">
+          ← Back to Leaderboard
+        </Link>
       </header>
 
-      <section className="rounded-2xl border p-6 bg-white">
+      <section className="mb-8">
         <h2 className="text-lg font-semibold mb-2">This Week</h2>
         <div className="flex gap-10">
-          <div><div className="text-3xl font-bold">{totals?.goals ?? 0}</div><div className="text-xs text-slate-500">Goals</div></div>
-          <div><div className="text-3xl font-bold">{totals?.assists ?? 0}</div><div className="text-xs text-slate-500">Assists</div></div>
+          <div>
+            <div className="text-3xl font-bold">{totals.goals ?? 0}</div>
+            <div className="text-xs text-slate-500">Goals</div>
+          </div>
+          <div>
+            <div className="text-3xl font-bold">{totals.assists ?? 0}</div>
+            <div className="text-xs text-slate-500">Assists</div>
+          </div>
+          <div>
+            <div className="text-3xl font-bold">{totals.player_points ?? 0}</div>
+            <div className="text-xs text-slate-500">Player Pts</div>
+          </div>
+          <div>
+            <div className="text-3xl font-bold">{totals.pick_points ?? 0}</div>
+            <div className="text-xs text-slate-500">Pick Pts</div>
+          </div>
+          <div>
+            <div className="text-3xl font-bold">{totals.total_points ?? 0}</div>
+            <div className="text-xs text-slate-500">Total</div>
+          </div>
         </div>
       </section>
 
-      <section className="rounded-2xl border p-6 bg-white">
-        <h2 className="text-lg font-semibold mb-2">Active Roster</h2>
-        <ul className="space-y-2">
-          {(roster ?? []).map((r: any) => (
-            <li key={r.player_id} className="flex items-center justify-between">
-              <span>{r.players?.name}</span>
-              <span className="text-xs text-slate-500">
-                {r.players?.position} • {r.players?.team_abbr}
-              </span>
-            </li>
-          ))}
-          {(!roster || roster.length === 0) && (
-            <li className="text-sm text-slate-500">No players yet.</li>
-          )}
-        </ul>
+      {/* TODO: roster and game picks detail sections */}
+      <section>
+        <p className="text-sm text-slate-500">
+          Roster and picks details coming soon.
+        </p>
       </section>
     </main>
   );
