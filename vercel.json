@@ -1,6 +1,13 @@
 {
+  "version": 2,
   "crons": [
-    { "path": "/api/update-today", "schedule": "*/15 * * * THU,FRI,SAT,SUN" },
-    { "path": "/api/update-stats", "schedule": "0 10 * * MON" }
+    {
+      "path": "/api/update-stats",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/update-today",
+      "schedule": "0 8 * * *"
+    }
   ]
 }
