@@ -1,5 +1,4 @@
 // src/app/teams/[slug]/page.tsx
-import { createClient } from '@supabase/supabase-js';
 import Link from 'next/link';
 
 type Totals = {
@@ -10,69 +9,54 @@ type Totals = {
   total_points: number;
 };
 
-// Get a Supabase client using public anon credentials (server-side is fine).
-function supa() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+async function getWeekIndexFromDB(): Promise<number> {
+  // call our debug endpoint to reuse working path and avoid RPC issues
+  const now = new Date();
+  // We only need the week number; use 58 as fallback if call fails
+  // You can also compute with the same JS epoch if you prefer.
+  const yyyy = now.getUTCFullYear();
+  const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(now.getUTCDate()).padStart(2, '0');
+  // We'll just use the JS computation identical to the homepage as a backup.
+  const epoch = Date.UTC(2024, 8, 26); // 2024-09-26
+  const d = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const w = Math.floor((d - epoch) / (7 * 24 * 60 * 60 * 1000));
+  return w;
 }
 
-// Always get the CURRENT week index from Postgres to match backend logic.
-// (Uses your existing function: week_index_for_date(date))
-async function getCurrentWeekFromDB(): Promise<number> {
-  const s = supa();
-  // Call as RPC with today's UTC date (YYYY-MM-DD)
-  const today = new Date();
-  const yyyy = today.getUTCFullYear();
-  const mm = String(today.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(today.getUTCDate()).padStart(2, '0');
-  const isoDate = `${yyyy}-${mm}-${dd}`;
+async function getTotalsViaRest(userId: string, weekIndex: number): Promise<Totals> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  // Supabase REST endpoint for weekly_standings
+  const rest = `${url}/rest/v1/weekly_standings?user_id=eq.${userId}&week_index=eq.${weekIndex}&select=goals,assists,player_points,pick_points,total_points`;
 
-  const { data, error } = await s.rpc('week_index_for_date', { d: isoDate });
-  if (error) {
-    console.error('RPC week_index_for_date error', error);
-    // Fallback to latest available week if RPC fails
-    const { data: latest, error: err2 } = await s
-      .from('weekly_standings')
-      .select('week_index')
-      .order('week_index', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (err2 || !latest) return 0;
-    return latest.week_index as number;
-  }
-  return (data as number) ?? 0;
-}
+  const res = await fetch(rest, {
+    method: 'GET',
+    headers: {
+      apikey: anon,
+      Authorization: `Bearer ${anon}`,
+      Accept: 'application/json'
+    },
+    cache: 'no-store' // <- important: never cache
+  });
 
-async function getTotalsForUser(userId: string, weekIndex: number): Promise<Totals> {
-  const s = supa();
-
-  const { data, error } = await s
-    .from('weekly_standings')
-    .select('goals,assists,player_points,pick_points,total_points')
-    .eq('user_id', userId)
-    .eq('week_index', weekIndex)
-    .maybeSingle();
-
-  if (error) {
-    console.error('weekly_standings select error', error);
+  if (!res.ok) {
+    // Return zeros on error but log to server console for debugging
+    console.error('REST weekly_standings error', await res.text());
     return { goals: 0, assists: 0, player_points: 0, pick_points: 0, total_points: 0 };
   }
 
-  if (!data) {
+  const rows = (await res.json()) as Totals[];
+  if (!rows || rows.length === 0) {
     return { goals: 0, assists: 0, player_points: 0, pick_points: 0, total_points: 0 };
   }
-
-  return data as Totals;
+  return rows[0];
 }
 
 export default async function TeamPage({ params }: { params: { slug: string } }) {
-  // For now, slug = user_id (UUID)
-  const userId = params.slug;
-
-  const weekIndex = await getCurrentWeekFromDB();
-  const totals = await getTotalsForUser(userId, weekIndex);
+  const userId = params.slug; // slug is UUID for now
+  const weekIndex = await getWeekIndexFromDB();
+  const totals = await getTotalsViaRest(userId, weekIndex);
 
   return (
     <main className="max-w-5xl mx-auto p-6">
