@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import RealtimeWeeklyStandings from './components/RealtimeWeeklyStandings';
-import { fetchWeeklyStandings } from './lib/standings';
+import { fetchWeeklyStandings } from '../lib/standings'; // <-- fixed path
 
 type Row = {
   week_index: number;
@@ -39,7 +39,6 @@ const StandingsClient: React.FC<Props> = ({ weekIndex }) => {
 
   return (
     <>
-      {/* Subscribes to Supabase realtime and re-fetches when a row changes */}
       <RealtimeWeeklyStandings weekIndex={weekIndex} onInvalidate={load} />
 
       {loading ? (
@@ -54,12 +53,8 @@ const StandingsClient: React.FC<Props> = ({ weekIndex }) => {
               className="border rounded p-3 flex justify-between"
             >
               <div>
-                <div className="font-semibold">
-                  User: {r.user_id.slice(0, 8)}…
-                </div>
-                <div className="text-sm opacity-70">
-                  G {r.goals} • A {r.assists}
-                </div>
+                <div className="font-semibold">User: {r.user_id.slice(0, 8)}…</div>
+                <div className="text-sm opacity-70">G {r.goals} • A {r.assists}</div>
               </div>
               <div className="text-right">
                 <div className="text-sm">Players: {r.player_points}</div>
