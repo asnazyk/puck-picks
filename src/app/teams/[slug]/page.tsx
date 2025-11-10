@@ -2,14 +2,6 @@
 import { createClient } from '@supabase/supabase-js';
 import Link from 'next/link';
 
-// simple util – keep in sync with db epoch if you change it
-function getCurrentWeekIndex(date = new Date()): number {
-  const epoch = Date.UTC(2024, 8, 26); // 2024-09-26 (Thu)
-  const d = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
-  const msPerWeek = 7 * 24 * 60 * 60 * 1000;
-  return Math.floor((d - epoch) / msPerWeek);
-}
-
 type Totals = {
   goals: number;
   assists: number;
@@ -18,13 +10,45 @@ type Totals = {
   total_points: number;
 };
 
-async function getTotalsForUser(userId: string, weekIndex: number): Promise<Totals> {
-  const supabase = createClient(
+// Get a Supabase client using public anon credentials (server-side is fine).
+function supa() {
+  return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
+}
 
-  const { data, error } = await supabase
+// Always get the CURRENT week index from Postgres to match backend logic.
+// (Uses your existing function: week_index_for_date(date))
+async function getCurrentWeekFromDB(): Promise<number> {
+  const s = supa();
+  // Call as RPC with today's UTC date (YYYY-MM-DD)
+  const today = new Date();
+  const yyyy = today.getUTCFullYear();
+  const mm = String(today.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(today.getUTCDate()).padStart(2, '0');
+  const isoDate = `${yyyy}-${mm}-${dd}`;
+
+  const { data, error } = await s.rpc('week_index_for_date', { d: isoDate });
+  if (error) {
+    console.error('RPC week_index_for_date error', error);
+    // Fallback to latest available week if RPC fails
+    const { data: latest, error: err2 } = await s
+      .from('weekly_standings')
+      .select('week_index')
+      .order('week_index', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (err2 || !latest) return 0;
+    return latest.week_index as number;
+  }
+  return (data as number) ?? 0;
+}
+
+async function getTotalsForUser(userId: string, weekIndex: number): Promise<Totals> {
+  const s = supa();
+
+  const { data, error } = await s
     .from('weekly_standings')
     .select('goals,assists,player_points,pick_points,total_points')
     .eq('user_id', userId)
@@ -32,7 +56,7 @@ async function getTotalsForUser(userId: string, weekIndex: number): Promise<Tota
     .maybeSingle();
 
   if (error) {
-    // return zeros instead of throwing to keep the page building
+    console.error('weekly_standings select error', error);
     return { goals: 0, assists: 0, player_points: 0, pick_points: 0, total_points: 0 };
   }
 
@@ -44,10 +68,10 @@ async function getTotalsForUser(userId: string, weekIndex: number): Promise<Tota
 }
 
 export default async function TeamPage({ params }: { params: { slug: string } }) {
-  // Your slug should ultimately map to a user/team owner.
-  // For now we assume slug is the user_id (UUID) to keep this compiling.
+  // For now, slug = user_id (UUID)
   const userId = params.slug;
-  const weekIndex = getCurrentWeekIndex();
+
+  const weekIndex = await getCurrentWeekFromDB();
   const totals = await getTotalsForUser(userId, weekIndex);
 
   return (
@@ -83,13 +107,11 @@ export default async function TeamPage({ params }: { params: { slug: string } })
             <div className="text-xs text-slate-500">Total</div>
           </div>
         </div>
+        <div className="text-xs text-slate-400 mt-2">Week index: {weekIndex}</div>
       </section>
 
-      {/* TODO: roster and game picks detail sections */}
       <section>
-        <p className="text-sm text-slate-500">
-          Roster and picks details coming soon.
-        </p>
+        <p className="text-sm text-slate-500">Roster and picks details coming soon.</p>
       </section>
     </main>
   );
