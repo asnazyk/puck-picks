@@ -1,4 +1,5 @@
 // src/app/teams/rosters/page.tsx
+
 type PlayerRow = {
   player_id: string
   full_name: string
@@ -9,6 +10,11 @@ type PlayerRow = {
 type RosterJoin = {
   user_id: string
   player_id: string
+}
+
+type UsersPublicRow = {
+  user_id: string
+  display_name: string
 }
 
 const SUPA_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -49,25 +55,44 @@ async function fetchPlayersByIds(ids: string[]): Promise<Record<string, PlayerRo
   return out
 }
 
-// Optional: map known UUIDs to friendly names
-const USER_NAME_MAP: Record<string, string> = {
-  "933348f1-4b21-406b-84dc-7be353b6ae95": "Andy",
+async function fetchUsersPublic(): Promise<Record<string, string>> {
+  const url = `${SUPA_URL}/rest/v1/users_public?select=user_id,display_name`
+  const res = await fetch(url, {
+    headers: { apikey: SUPA_ANON, Authorization: `Bearer ${SUPA_ANON}` },
+    // names change rarely; SSG each request without reusing between sessions
+    cache: "no-store",
+  })
+  if (!res.ok) {
+    console.error("Failed to fetch users_public:", await res.text())
+    return {}
+  }
+  const rows = (await res.json()) as UsersPublicRow[]
+  const map: Record<string, string> = {}
+  rows.forEach((r) => (map[r.user_id] = r.display_name))
+  return map
 }
 
 export default async function TeamsRostersPage() {
+  // 1) fetch roster rows
   const roster = await fetchRosters()
 
+  // 2) group by user_id
   const byUser: Record<string, string[]> = {}
   for (const row of roster) {
     if (!byUser[row.user_id]) byUser[row.user_id] = []
     byUser[row.user_id].push(row.player_id)
   }
 
+  // 3) fetch players referenced
   const allIds = Array.from(new Set(roster.map((r) => r.player_id)))
   const playersById = await fetchPlayersByIds(allIds)
 
+  // 4) fetch friendly display names
+  const nameMap = await fetchUsersPublic()
+
+  // 5) build blocks
   const userBlocks = Object.entries(byUser).map(([userId, pids]) => {
-    const displayName = USER_NAME_MAP[userId] || userId
+    const displayName = nameMap[userId] || userId
     const playerRows = pids
       .map((pid) => playersById[pid])
       .filter(Boolean)
@@ -75,6 +100,7 @@ export default async function TeamsRostersPage() {
     return { userId, displayName, playerRows }
   })
 
+  // sort teams alphabetically by display name
   userBlocks.sort((a, b) => a.displayName.localeCompare(b.displayName))
 
   return (
