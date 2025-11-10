@@ -1,121 +1,94 @@
-import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+// Platform: Visual Studio Code
+// File: src/app/api/update-stats/route.ts
+import { NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const SPORTDATAIO_API_KEY = process.env.SPORTDATAIO_API_KEY!;
+const SRV = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const API = process.env.SPORTDATAIO_API_KEY!;
 
-/** League week: Thursday → Sunday window, returns { weekIndex, dates[] } for the window that contains "now". */
-function getThuSunWindow(now = new Date()) {
-  // Convert to UTC date (stable)
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  // JS getUTCDay(): Sun=0..Sat=6
-  const dow = d.getUTCDay();
-  // Find Thursday of current week (Thu=4)
-  const offsetToThu = ((4 - dow) + 7) % 7; // days forward to Thursday
-  const thu = new Date(d);
-  thu.setUTCDate(d.getUTCDate() + offsetToThu);
-
-  // Window is Thu..Sun (4 days)
-  const dates: string[] = [];
-  for (let i = 0; i < 4; i++) {
-    const dd = new Date(thu);
-    dd.setUTCDate(thu.getUTCDate() + i);
-    const yyyy = dd.getUTCFullYear();
-    const mm = String(dd.getUTCMonth() + 1).padStart(2, "0");
-    const day = String(dd.getUTCDate()).padStart(2, "0");
-    dates.push(`${yyyy}-${mm}-${day}`);
-  }
-
-  // A stable "league week index": number of Thursdays since season start anchor.
-  // Simple anchor: first Thursday of the current NHL season (customize as needed).
-  // For now, compute relative to the year start's first Thursday:
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  const yDow = yearStart.getUTCDay();
-  const toFirstThu = ((4 - yDow) + 7) % 7;
-  const firstThu = new Date(yearStart);
-  firstThu.setUTCDate(yearStart.getUTCDate() + toFirstThu);
-  const weekIndex = Math.floor((thu.getTime() - firstThu.getTime()) / (7 * 24 * 3600 * 1000)) + 1;
-
-  return { weekIndex, dates };
+function ymdUTC(d = new Date()) {
+  const u = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const yyyy = u.getUTCFullYear();
+  const mm = String(u.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(u.getUTCDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 export async function GET() {
+  const supabase = createClient(SUPABASE_URL, SRV);
+
   try {
-    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !SPORTDATAIO_API_KEY) {
-      return NextResponse.json({ ok: false, error: "Missing env vars" }, { status: 500 });
-    }
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    const date = ymdUTC();
+    const url = `https://api.sportsdata.io/v4/nhl/stats/json/PlayerGameStatsByDate/${date}?key=${API}`;
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`SportsDataIO error: ${res.status}`);
 
-    // Load players we track
-    const { data: players, error: pErr } = await supabase
-      .from("players")
-      .select("id, name, sportdataio_player_id");
-    if (pErr) throw pErr;
+    const stats = await res.json();
 
-    // Build quick maps
-    const byId = new Map<number, any>();
-    const byName = new Map<string, any[]>();
+    // Expect your existing "players" table to have (id, nhl_id)
+    // We'll look up player_id by nhl_id and upsert into player_points.
+    // If a player doesn't exist in players yet, we create a stub row.
 
-    // Aggregate goals/assists over Thu..Sun
-    const { weekIndex, dates } = getThuSunWindow(new Date());
-    let fetched = 0;
-    const aggregate = new Map<string, { goals: number; assists: number }>(); // key=player name (lower) or sd id string
-
-    for (const date of dates) {
-      const url = `https://api.sportsdata.io/v3/nhl/stats/json/PlayerGameStatsByDate/${date}?key=${SPORTDATAIO_API_KEY}`;
-      const resp = await fetch(url, { cache: "no-store" });
-      if (!resp.ok) {
-        const t = await resp.text();
-        throw new Error(`SportDataIO ${date} failed: ${resp.status} ${t}`);
-      }
-      const rows: any[] = await resp.json();
-      fetched += rows.length;
-      for (const s of rows) {
-        const kId = typeof s?.PlayerID === "number" ? `id:${s.PlayerID}` : null;
-        const kName = (s?.Name || "").trim().toLowerCase();
-        const goals = Number(s?.Goals || 0);
-        const assists = Number(s?.Assists || 0);
-        if (kId) {
-          const prev = aggregate.get(kId) || { goals: 0, assists: 0 };
-          prev.goals += goals;
-          prev.assists += assists;
-          aggregate.set(kId, prev);
-        }
-        if (kName) {
-          const prev = aggregate.get(kName) || { goals: 0, assists: 0 };
-          prev.goals += goals;
-          prev.assists += assists;
-          aggregate.set(kName, prev);
-        }
-      }
+    // 1) Create a map of nhl_id -> {goals, assists, points}
+    const byNhl: Record<number, { goals: number; assists: number; points: number; name: string; team: string; }> = {};
+    for (const s of stats) {
+      const nhlId = s.PlayerID;
+      const goals = s.Goals || 0;
+      const assists = s.Assists || 0;
+      const points = 6 * goals + 3 * assists;
+      byNhl[nhlId] = { goals, assists, points, name: s.Name, team: s.Team };
     }
 
-    // Build upserts per player
-    const upserts: { player_id: string; week: number; goals: number; assists: number }[] = [];
-    for (const p of players || []) {
-      let g = 0, a = 0;
-      if (p.sportdataio_player_id) {
-        const hit = aggregate.get(`id:${p.sportdataio_player_id}`);
-        if (hit) { g += hit.goals; a += hit.assists; }
-      } else if (p.name) {
-        const hit = aggregate.get(p.name.trim().toLowerCase());
-        if (hit) { g += hit.goals; a += hit.assists; }
-      }
-      if (g || a) {
-        upserts.push({ player_id: p.id, week: weekIndex, goals: g, assists: a });
-      }
+    const nhlIds = Object.keys(byNhl).map(Number);
+    if (nhlIds.length === 0) return NextResponse.json({ ok: true, updated: 0 });
+
+    // 2) fetch known players by nhl_id
+    const { data: existingPlayers, error: qErr } = await supabase
+      .from('players')
+      .select('id, nhl_id')
+      .in('nhl_id', nhlIds);
+    if (qErr) throw qErr;
+
+    const known = new Map<number, string>(); // nhl_id -> player_id
+    (existingPlayers || []).forEach((p: any) => known.set(p.nhl_id, p.id));
+
+    // 3) create stubs for unknown players
+    const missing = nhlIds.filter(id => !known.has(id));
+    if (missing.length) {
+      const stubs = missing.map((nhl_id) => ({
+        nhl_id,
+        name: byNhl[nhl_id].name || `NHL #${nhl_id}`,
+        team: byNhl[nhl_id].team || null,
+        position: null
+      }));
+      const { data: inserted, error: insErr } = await supabase
+        .from('players')
+        .insert(stubs)
+        .select('id, nhl_id');
+      if (insErr) throw insErr;
+      (inserted || []).forEach((p: any) => known.set(p.nhl_id, p.id));
     }
 
-    if (upserts.length) {
+    // 4) Upsert into player_points using player_id + nhl_id
+    const rows = nhlIds.map((nhl_id) => {
+      const player_id = known.get(nhl_id);
+      const { goals, assists, points } = byNhl[nhl_id];
+      return { player_id, nhl_id, goals, assists, points, updated_at: new Date().toISOString() };
+    }).filter(r => r.player_id); // drop any that still failed to resolve
+
+    if (rows.length) {
       const { error: upErr } = await supabase
-        .from("weekly_player_stats")
-        .upsert(upserts, { onConflict: "player_id,week" });
+        .from('player_points')
+        .upsert(rows, { onConflict: 'player_id' });
       if (upErr) throw upErr;
+
+      // Optional: ensure a visible write (handy in testing)
+      await supabase.rpc('realtime_force_touch_players_today');
     }
 
-    return NextResponse.json({ ok: true, week: weekIndex, dates, fetched, updated: upserts.length });
+    return NextResponse.json({ ok: true, updated: rows.length });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
+    return NextResponse.json({ ok: false, error: e.message }, { status: 500 });
   }
 }
