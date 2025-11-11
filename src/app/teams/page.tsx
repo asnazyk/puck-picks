@@ -1,56 +1,152 @@
-// src/app/teams/page.tsx
-import { supabase } from "@/lib/supabase";
+// src/app/teams/rosters/page.tsx
 
-export const revalidate = 30; // ISR: revalidate every 30s (tune as needed)
-
-export default async function TeamsPage() {
-  // Query the 'teams' table, ordered by name
-  const { data: teams, error } = await supabase
-    .from("teams")
-    .select("id, name, slug, owner, logo_url")
-    .order("name", { ascending: true });
-
-  if (error) {
-    // Simple error surface; you can style this as a toast later
-    return (
-      <section className="space-y-4">
-        <h1 className="text-2xl font-semibold">Teams</h1>
-        <p className="text-sm text-red-600">Error loading teams: {error.message}</p>
-      </section>
-    );
-  }
-
-  return (
-    <section className="space-y-6">
-      <h1 className="text-2xl font-semibold">Teams</h1>
-
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {(teams ?? []).map((t) => (
-          <a
-            key={t.id}
-            href={`/teams/${t.slug}`}
-            className="rounded-2xl border shadow-sm p-6 bg-white hover:shadow-md flex items-center gap-4"
-          >
-            {t.logo_url ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={t.logo_url} alt={t.name} className="w-10 h-10 rounded-lg object-cover" />
-            ) : (
-              <div className="w-10 h-10 rounded-lg bg-slate-100 grid place-items-center text-slate-500 text-xs">PP</div>
-            )}
-            <div>
-              <div className="text-lg font-semibold">{t.name}</div>
-              {t.owner && <div className="text-xs text-slate-500 mt-1">Owner: {t.owner}</div>}
-            </div>
-          </a>
-        ))}
-      </div>
-
-      {(!teams || teams.length === 0) && (
-        <p className="text-sm text-slate-500">
-          No teams yet. Add a couple rows to the <code>teams</code> table in Supabase to see them here.
-        </p>
-      )}
-    </section>
-  );
+type PlayerRow = {
+  player_id: string
+  full_name: string
+  position: string | null
+  team_abbr: string | null
 }
 
+type RosterJoin = {
+  user_id: string
+  player_id: string
+}
+
+type UsersPublicRow = {
+  user_id: string
+  display_name: string
+}
+
+const SUPA_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
+const SUPA_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+
+async function fetchRosters(): Promise<RosterJoin[]> {
+  const url = `${SUPA_URL}/rest/v1/team_rosters?select=user_id,player_id&active=eq.true`
+  const res = await fetch(url, {
+    headers: { apikey: SUPA_ANON, Authorization: `Bearer ${SUPA_ANON}` },
+    cache: "no-store",
+  })
+  if (!res.ok) {
+    console.error("Failed to fetch team_rosters:", await res.text())
+    return []
+  }
+  return (await res.json()) as RosterJoin[]
+}
+
+async function fetchPlayersByIds(ids: string[]): Promise<Record<string, PlayerRow>> {
+  if (ids.length === 0) return {}
+  const chunkSize = 200
+  const out: Record<string, PlayerRow> = {}
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const subset = ids.slice(i, i + chunkSize)
+    const inList = "(" + subset.map((id) => `"${id.replace(/"/g, '""')}"`).join(",") + ")"
+    const url = `${SUPA_URL}/rest/v1/players?select=player_id,full_name,position,team_abbr&player_id=in.${encodeURIComponent(inList)}`
+    const res = await fetch(url, {
+      headers: { apikey: SUPA_ANON, Authorization: `Bearer ${SUPA_ANON}` },
+      cache: "no-store",
+    })
+    if (!res.ok) {
+      console.error("Failed to fetch players:", await res.text())
+      continue
+    }
+    const rows = (await res.json()) as PlayerRow[]
+    rows.forEach((r) => (out[r.player_id] = r))
+  }
+  return out
+}
+
+async function fetchUsersPublic(): Promise<Record<string, string>> {
+  const url = `${SUPA_URL}/rest/v1/users_public?select=user_id,display_name`
+  const res = await fetch(url, {
+    headers: { apikey: SUPA_ANON, Authorization: `Bearer ${SUPA_ANON}` },
+    // names change rarely; SSG each request without reusing between sessions
+    cache: "no-store",
+  })
+  if (!res.ok) {
+    console.error("Failed to fetch users_public:", await res.text())
+    return {}
+  }
+  const rows = (await res.json()) as UsersPublicRow[]
+  const map: Record<string, string> = {}
+  rows.forEach((r) => (map[r.user_id] = r.display_name))
+  return map
+}
+
+export default async function TeamsRostersPage() {
+  // 1) fetch roster rows
+  const roster = await fetchRosters()
+
+  // 2) group by user_id
+  const byUser: Record<string, string[]> = {}
+  for (const row of roster) {
+    if (!byUser[row.user_id]) byUser[row.user_id] = []
+    byUser[row.user_id].push(row.player_id)
+  }
+
+  // 3) fetch players referenced
+  const allIds = Array.from(new Set(roster.map((r) => r.player_id)))
+  const playersById = await fetchPlayersByIds(allIds)
+
+  // 4) fetch friendly display names
+  const nameMap = await fetchUsersPublic()
+
+  // 5) build blocks
+  const userBlocks = Object.entries(byUser).map(([userId, pids]) => {
+    const displayName = nameMap[userId] || userId
+    const playerRows = pids
+      .map((pid) => playersById[pid])
+      .filter(Boolean)
+      .sort((a, b) => a.full_name.localeCompare(b.full_name))
+    return { userId, displayName, playerRows }
+  })
+
+  // sort teams alphabetically by display name
+  userBlocks.sort((a, b) => a.displayName.localeCompare(b.displayName))
+
+  return (
+    <main className="mx-auto max-w-6xl px-4 py-8">
+      <header className="mb-8 flex items-end justify-between">
+        <div>
+          <h1 className="text-3xl font-bold">Team Rosters</h1>
+          <p className="text-sm text-gray-500">Drafted rosters (active)</p>
+        </div>
+        <a href="/teams" className="text-sm underline underline-offset-4 hover:opacity-80">
+          ← Back to Teams
+        </a>
+      </header>
+
+      {userBlocks.length === 0 ? (
+        <div className="rounded-xl border p-6 text-sm text-gray-600">
+          No active rosters found. Once you insert rows into <code>team_rosters</code>, they will appear here automatically.
+        </div>
+      ) : (
+        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          {userBlocks.map(({ userId, displayName, playerRows }) => (
+            <section key={userId} className="rounded-2xl border shadow-sm">
+              <div className="border-b px-4 py-3">
+                <h2 className="truncate text-lg font-semibold">{displayName}</h2>
+                <p className="text-xs text-gray-500">{userId}</p>
+              </div>
+              <ul className="divide-y">
+                {playerRows.length === 0 ? (
+                  <li className="px-4 py-3 text-sm text-gray-500">No active players</li>
+                ) : (
+                  playerRows.map((p) => (
+                    <li key={p.player_id} className="px-4 py-2.5 text-sm">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="truncate">{p.full_name}</span>
+                        <span className="shrink-0 tabular-nums text-gray-500">
+                          {p.position ?? "-"} {p.team_abbr ? `· ${p.team_abbr}` : ""}
+                        </span>
+                      </div>
+                    </li>
+                  ))
+                )}
+              </ul>
+            </section>
+          ))}
+        </div>
+      )}
+    </main>
+  )
+}
