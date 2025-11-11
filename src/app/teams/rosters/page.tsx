@@ -1,5 +1,4 @@
 // src/app/teams/rosters/page.tsx
-
 type PlayerRow = {
   player_id: string
   full_name: string
@@ -21,13 +20,13 @@ const SUPA_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const SUPA_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 
 async function fetchRosters(): Promise<RosterJoin[]> {
-  const url = `${SUPA_URL}/rest/v1/team_rosters?select=user_id,player_id&active=eq.true`
+  const url = `${SUPA_URL}/rest/v1/pp_team_rosters?select=user_id,player_id&active=eq.true`
   const res = await fetch(url, {
     headers: { apikey: SUPA_ANON, Authorization: `Bearer ${SUPA_ANON}` },
     cache: "no-store",
   })
   if (!res.ok) {
-    console.error("Failed to fetch team_rosters:", await res.text())
+    console.error("Failed to fetch pp_team_rosters:", await res.text())
     return []
   }
   return (await res.json()) as RosterJoin[]
@@ -35,18 +34,18 @@ async function fetchRosters(): Promise<RosterJoin[]> {
 
 async function fetchPlayersByIds(ids: string[]): Promise<Record<string, PlayerRow>> {
   if (ids.length === 0) return {}
-  const chunkSize = 200
   const out: Record<string, PlayerRow> = {}
-  for (let i = 0; i < ids.length; i += chunkSize) {
-    const subset = ids.slice(i, i + chunkSize)
-    const inList = "(" + subset.map((id) => `"${id.replace(/"/g, '""')}"`).join(",") + ")"
-    const url = `${SUPA_URL}/rest/v1/players?select=player_id,full_name,position,team_abbr&player_id=in.${encodeURIComponent(inList)}`
+  const chunk = 200
+  for (let i = 0; i < ids.length; i += chunk) {
+    const sub = ids.slice(i, i + chunk)
+    const inList = "(" + sub.map((id) => `"${id.replace(/"/g, '""')}"`).join(",") + ")"
+    const url = `${SUPA_URL}/rest/v1/pp_players?select=player_id,full_name,position,team_abbr&player_id=in.${encodeURIComponent(inList)}`
     const res = await fetch(url, {
       headers: { apikey: SUPA_ANON, Authorization: `Bearer ${SUPA_ANON}` },
       cache: "no-store",
     })
     if (!res.ok) {
-      console.error("Failed to fetch players:", await res.text())
+      console.error("Failed to fetch pp_players:", await res.text())
       continue
     }
     const rows = (await res.json()) as PlayerRow[]
@@ -59,7 +58,6 @@ async function fetchUsersPublic(): Promise<Record<string, string>> {
   const url = `${SUPA_URL}/rest/v1/users_public?select=user_id,display_name`
   const res = await fetch(url, {
     headers: { apikey: SUPA_ANON, Authorization: `Bearer ${SUPA_ANON}` },
-    // names change rarely; SSG each request without reusing between sessions
     cache: "no-store",
   })
   if (!res.ok) {
@@ -73,24 +71,18 @@ async function fetchUsersPublic(): Promise<Record<string, string>> {
 }
 
 export default async function TeamsRostersPage() {
-  // 1) fetch roster rows
   const roster = await fetchRosters()
 
-  // 2) group by user_id
   const byUser: Record<string, string[]> = {}
   for (const row of roster) {
     if (!byUser[row.user_id]) byUser[row.user_id] = []
     byUser[row.user_id].push(row.player_id)
   }
 
-  // 3) fetch players referenced
   const allIds = Array.from(new Set(roster.map((r) => r.player_id)))
   const playersById = await fetchPlayersByIds(allIds)
-
-  // 4) fetch friendly display names
   const nameMap = await fetchUsersPublic()
 
-  // 5) build blocks
   const userBlocks = Object.entries(byUser).map(([userId, pids]) => {
     const displayName = nameMap[userId] || userId
     const playerRows = pids
@@ -100,7 +92,6 @@ export default async function TeamsRostersPage() {
     return { userId, displayName, playerRows }
   })
 
-  // sort teams alphabetically by display name
   userBlocks.sort((a, b) => a.displayName.localeCompare(b.displayName))
 
   return (
@@ -117,7 +108,7 @@ export default async function TeamsRostersPage() {
 
       {userBlocks.length === 0 ? (
         <div className="rounded-xl border p-6 text-sm text-gray-600">
-          No active rosters found. Once you insert rows into <code>team_rosters</code>, they will appear here automatically.
+          No active rosters found. Once you insert rows into <code>pp_team_rosters</code>, they will appear here automatically.
         </div>
       ) : (
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
