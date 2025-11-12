@@ -1,21 +1,12 @@
-// src/app/api/map-player-ids/route.ts
-// Run on Node.js so env vars are available; never prerender
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { createClient } from "@supabase/supabase-js";
 
-/**
- * REQUIRED ENV VARS (set in Vercel + .env.local):
- *  - NEXT_PUBLIC_SUPABASE_URL
- *  - SUPABASE_SERVICE_ROLE_KEY
- *  - SPORTSDATAIO_API_KEY
- */
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
 const SRV = process.env.SUPABASE_SERVICE_ROLE_KEY as string;
 const SPORTSDATAIO_API_KEY = process.env.SPORTSDATAIO_API_KEY as string;
 
-// ---- tiny helpers (no fancy TS) ----
 function norm(s: string) {
   return (s || "")
     .toLowerCase()
@@ -32,76 +23,73 @@ function scoreNameMatch(a: string, b: string) {
   const A = new Set(nameTokens(a));
   const B = new Set(nameTokens(b));
   let inter = 0;
-  A.forEach((t) => {
-    if (B.has(t)) inter++;
-  });
-  const union = new Set([...Array.from(A), ...Array.from(B)]).size || 1;
-  return inter / union; // 0..1
+  A.forEach((t) => { if (B.has(t)) inter++; });
+  const union = new Set([...A, ...B]).size || 1;
+  return inter / union;
 }
 
 export async function GET() {
-  // 0) env guard
-  if (!SUPABASE_URL || !SRV || !SPORTSDATAIO_API_KEY) {
-    return new Response(
-      JSON.stringify({
-        error:
-          "Missing envs: NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SPORTSDATAIO_API_KEY",
-      }),
-      { status: 500, headers: { "content-type": "application/json" } }
-    );
+  // Fast “version” ping to prove which code is live
+  // e.g. /api/map-player-ids?ping=1
+  const url = new URL(globalThis.location?.href ?? "http://local");
+  if (url.searchParams.get("ping")) {
+    return new Response(JSON.stringify({ ok: true, version: "mapper_v2_update_only" }), {
+      headers: { "content-type": "application/json" },
+    });
   }
 
-  try {
-    const supabase = createClient(SUPABASE_URL, SRV);
+  if (!SUPABASE_URL || !SRV || !SPORTSDATAIO_API_KEY) {
+    return new Response(JSON.stringify({ error: "Missing envs" }), {
+      status: 500, headers: { "content-type": "application/json" },
+    });
+  }
 
-    // 1) players missing IDs
+  const supabase = createClient(SUPABASE_URL, SRV);
+
+  try {
+    // Only UPDATE rows that lack an nhl_player_id. NO UPSERT/INSERT.
     const need = await supabase
       .from("pp_players")
-      .select("player_id, full_name, nhl_player_id")
+      .select("player_id, full_name")
       .is("nhl_player_id", null);
 
     if (need.error) {
-      return new Response(JSON.stringify({ error: need.error.message }), {
-        status: 500,
+      return new Response(JSON.stringify({ error: need.error.message, version: "mapper_v2_update_only" }), {
+        status: 500, headers: { "content-type": "application/json" },
+      });
+    }
+    const rows = need.data || [];
+    if (!rows.length) {
+      return new Response(JSON.stringify({ ok: true, updated: 0, note: "No players need IDs", version: "mapper_v2_update_only" }), {
         headers: { "content-type": "application/json" },
       });
     }
 
-    const needIds = need.data || [];
-    if (!needIds.length) {
-      return new Response(
-        JSON.stringify({ ok: true, updated: 0, note: "No players need IDs" }),
-        { headers: { "content-type": "application/json" } }
-      );
-    }
-
-    // 2) fetch SportsDataIO players directory
-    const url =
+    // Pull SportsDataIO player directory once
+    const resp = await fetch(
       "https://api.sportsdata.io/v3/nhl/scores/json/Players?key=" +
-      encodeURIComponent(SPORTSDATAIO_API_KEY);
-    const resp = await fetch(url, { cache: "no-store" });
+        encodeURIComponent(SPORTSDATAIO_API_KEY),
+      { cache: "no-store" }
+    );
     if (!resp.ok) {
-      return new Response(
-        JSON.stringify({ error: "SportsDataIO error " + String(resp.status) }),
-        { status: 502, headers: { "content-type": "application/json" } }
-      );
+      return new Response(JSON.stringify({ error: "SportsDataIO error " + resp.status, version: "mapper_v2_update_only" }), {
+        status: 502, headers: { "content-type": "application/json" },
+      });
     }
-    const sdPlayers: any[] = await resp.json();
+    const sd: any[] = await resp.json();
 
-    // index by last name
     const byLast = new Map<string, any[]>();
-    for (const p of sdPlayers) {
-      const last = norm(p?.LastName || "");
-      if (!byLast.has(last)) byLast.set(last, []);
-      byLast.get(last)!.push(p);
+    for (const p of sd) {
+      const ln = norm(p?.LastName || "");
+      if (!byLast.has(ln)) byLast.set(ln, []);
+      byLast.get(ln)!.push(p);
     }
 
-    // 3) match and collect updates
-    const updates: { player_id: string; nhl_player_id: string }[] = [];
+    let updated = 0;
     const review: any[] = [];
 
-    for (const row of needIds) {
-      const full = row.full_name || row.player_id;
+    for (const r of rows) {
+      const full = r.full_name || r.player_id;
       const toks = nameTokens(full);
       const last = toks[toks.length - 1];
       const candidates = byLast.get(last) || [];
@@ -109,72 +97,61 @@ export async function GET() {
       let best: any = null;
       let bestScore = -1;
 
-      const scan = (list: any[]) => {
-        for (const c of list) {
+      const scan = (arr: any[]) => {
+        for (const c of arr) {
           const cand =
-            c?.CommonName && c.CommonName.length > 0
+            c?.CommonName && c.CommonName.length
               ? c.CommonName
-              : ((c?.FirstName || "") + " " + (c?.LastName || "")).trim();
+              : `${c?.FirstName || ""} ${c?.LastName || ""}`.trim();
           const s = scoreNameMatch(full, cand);
-          if (s > bestScore) {
-            best = c;
-            bestScore = s;
-          }
+          if (s > bestScore) { best = c; bestScore = s; }
         }
       };
 
-      if (candidates.length) scan(candidates); // last-name bucket first
-      if (!best && sdPlayers.length) scan(sdPlayers); // fallback global
+      if (candidates.length) scan(candidates);
+      if (!best && sd.length) scan(sd);
 
       if (best && bestScore >= 0.6) {
-        updates.push({
-          player_id: row.player_id,
-          nhl_player_id: String(best.PlayerID),
-        });
+        // UPDATE ONLY (no upsert or insert)
+        const { error } = await supabase
+          .from("pp_players")
+          .update({ nhl_player_id: String(best.PlayerID) })
+          .eq("player_id", r.player_id);
+
+        if (!error) updated++;
+
         review.push({
-          player_id: row.player_id,
+          player_id: r.player_id,
           full_name: full,
-          matched_name: ((best?.FirstName || "") + " " + (best?.LastName || "")).trim(),
-          playerId: best?.PlayerID ?? null,
+          matched_name: `${best?.FirstName || ""} ${best?.LastName || ""}`.trim(),
+          nhl_player_id: best?.PlayerID ?? null,
           team: best?.Team ?? null,
           pos: best?.Position ?? null,
           score: Number(bestScore.toFixed(2)),
+          saved: !error,
+          err: error?.message || null,
         });
       } else {
         review.push({
-          player_id: row.player_id,
+          player_id: r.player_id,
           full_name: full,
           matched_name: null,
-          playerId: null,
+          nhl_player_id: null,
           team: null,
           pos: null,
           score: Number(bestScore.toFixed(2)),
+          saved: false,
+          err: null,
         });
       }
     }
 
-    // 4) upsert updates
-    if (updates.length) {
-      const up = await supabase
-        .from("pp_players")
-        .upsert(updates, { onConflict: "player_id" });
-      if (up.error) {
-        return new Response(JSON.stringify({ error: up.error.message, review }), {
-          status: 500,
-          headers: { "content-type": "application/json" },
-        });
-      }
-    }
-
-    return new Response(
-      JSON.stringify({ ok: true, updated: updates.length, review }),
-      { headers: { "content-type": "application/json" } }
-    );
-  } catch (err: any) {
-    const msg = err && err.message ? String(err.message) : "unknown error";
-    return new Response(JSON.stringify({ error: msg }), {
-      status: 500,
+    return new Response(JSON.stringify({ ok: true, updated, version: "mapper_v2_update_only", review }), {
       headers: { "content-type": "application/json" },
+    });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e?.message || "unknown error", version: "mapper_v2_update_only" }), {
+      status: 500, headers: { "content-type": "application/json" },
     });
   }
 }
