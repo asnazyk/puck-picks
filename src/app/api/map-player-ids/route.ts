@@ -1,15 +1,21 @@
 // src/app/api/map-player-ids/route.ts
-// Force this API to run dynamically (not prerendered)
+// Run on Node.js so env vars are available; never prerender
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { createClient } from "@supabase/supabase-js";
 
-// ===== REQUIRED ENVS (set in Vercel + .env.local) =====
+/**
+ * REQUIRED ENV VARS (set in Vercel + .env.local):
+ *  - NEXT_PUBLIC_SUPABASE_URL
+ *  - SUPABASE_SERVICE_ROLE_KEY
+ *  - SPORTSDATAIO_API_KEY
+ */
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
 const SRV = process.env.SUPABASE_SERVICE_ROLE_KEY as string;
 const SPORTSDATAIO_API_KEY = process.env.SPORTSDATAIO_API_KEY as string;
 
-// --------- Tiny helpers (no fancy TS) ----------
+// ---- tiny helpers (no fancy TS) ----
 function norm(s: string) {
   return (s || "")
     .toLowerCase()
@@ -30,11 +36,11 @@ function scoreNameMatch(a: string, b: string) {
     if (B.has(t)) inter++;
   });
   const union = new Set([...Array.from(A), ...Array.from(B)]).size || 1;
-  return inter / union;
+  return inter / union; // 0..1
 }
 
 export async function GET() {
-  // Basic env guard
+  // 0) env guard
   if (!SUPABASE_URL || !SRV || !SPORTSDATAIO_API_KEY) {
     return new Response(
       JSON.stringify({
@@ -48,7 +54,7 @@ export async function GET() {
   try {
     const supabase = createClient(SUPABASE_URL, SRV);
 
-    // 1) Pull players missing IDs
+    // 1) players missing IDs
     const need = await supabase
       .from("pp_players")
       .select("player_id, full_name, nhl_player_id")
@@ -60,15 +66,16 @@ export async function GET() {
         headers: { "content-type": "application/json" },
       });
     }
+
     const needIds = need.data || [];
-    if (needIds.length === 0) {
+    if (!needIds.length) {
       return new Response(
         JSON.stringify({ ok: true, updated: 0, note: "No players need IDs" }),
         { headers: { "content-type": "application/json" } }
       );
     }
 
-    // 2) Fetch SportsDataIO player directory (once)
+    // 2) fetch SportsDataIO players directory
     const url =
       "https://api.sportsdata.io/v3/nhl/scores/json/Players?key=" +
       encodeURIComponent(SPORTSDATAIO_API_KEY);
@@ -81,7 +88,7 @@ export async function GET() {
     }
     const sdPlayers: any[] = await resp.json();
 
-    // Index by last name
+    // index by last name
     const byLast = new Map<string, any[]>();
     for (const p of sdPlayers) {
       const last = norm(p?.LastName || "");
@@ -89,7 +96,7 @@ export async function GET() {
       byLast.get(last)!.push(p);
     }
 
-    // 3) Match & collect updates
+    // 3) match and collect updates
     const updates: { player_id: string; nhl_player_id: string }[] = [];
     const review: any[] = [];
 
@@ -116,9 +123,8 @@ export async function GET() {
         }
       };
 
-      // Prefer last-name bucket; fallback global
-      if (candidates.length) scan(candidates);
-      if (!best && sdPlayers.length) scan(sdPlayers);
+      if (candidates.length) scan(candidates); // last-name bucket first
+      if (!best && sdPlayers.length) scan(sdPlayers); // fallback global
 
       if (best && bestScore >= 0.6) {
         updates.push({
@@ -147,7 +153,7 @@ export async function GET() {
       }
     }
 
-    // 4) Upsert into pp_players
+    // 4) upsert updates
     if (updates.length) {
       const up = await supabase
         .from("pp_players")
@@ -165,10 +171,7 @@ export async function GET() {
       { headers: { "content-type": "application/json" } }
     );
   } catch (err: any) {
-    const msg =
-      err && typeof err === "object" && "message" in err
-        ? String(err.message)
-        : "unknown error";
+    const msg = err && err.message ? String(err.message) : "unknown error";
     return new Response(JSON.stringify({ error: msg }), {
       status: 500,
       headers: { "content-type": "application/json" },
