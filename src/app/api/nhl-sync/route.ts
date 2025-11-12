@@ -1,90 +1,154 @@
-// src/app/api/nhl-sync/route.ts
+// src/app/api/map-player-ids/route.ts
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SRV = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const SPORTSDATAIO_API_KEY = process.env.SPORTSDATAIO_API_KEY!;
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
+const SRV = process.env.SUPABASE_SERVICE_ROLE_KEY as string;
+const SPORTSDATAIO_API_KEY = process.env.SPORTSDATAIO_API_KEY as string;
 
-// SportsDataIO uses "2025" for the 2024-25 NHL season
-const SEASON = "2025";
+function norm(s: string) {
+  return (s || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^\w\s-]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+function nameTokens(s: string) {
+  const t = norm(s).split(" ").filter(Boolean);
+  return t.length ? t : [norm(s)];
+}
+function scoreNameMatch(a: string, b: string) {
+  const A = new Set(nameTokens(a));
+  const B = new Set(nameTokens(b));
+  let inter = 0;
+  A.forEach((t) => { if (B.has(t)) inter++; });
+  const union = new Set([...A, ...B]).size || 1;
+  return inter / union;
+}
 
 export async function GET() {
   if (!SUPABASE_URL || !SRV || !SPORTSDATAIO_API_KEY) {
-    return NextResponse.json(
-      { error: "Missing envs" },
-      { status: 500 }
-    );
+    return new Response(JSON.stringify({ error: "Missing envs" }), {
+      status: 500, headers: { "content-type": "application/json" },
+    });
   }
 
   const supabase = createClient(SUPABASE_URL, SRV);
 
   try {
-    // 1) Get players that have an NHL PlayerID mapped
-    const { data: players, error: pErr } = await supabase
+    // Only rows that still need mapping; we never insert, only update
+    const need = await supabase
       .from("pp_players")
-      .select("player_id, full_name, nhl_player_id")
-      .not("nhl_player_id", "is", null);
+      .select("player_id, full_name")
+      .is("nhl_player_id", null);
 
-    if (pErr) throw pErr;
-    if (!players || players.length === 0) {
-      return NextResponse.json({ ok: true, updated: 0, note: "No players with nhl_player_id" });
+    if (need.error) {
+      return new Response(JSON.stringify({ error: need.error.message }), {
+        status: 500, headers: { "content-type": "application/json" },
+      });
     }
-
-    // 2) Fetch season stats from SportsDataIO
-    const res = await fetch(
-      `https://api.sportsdata.io/v3/nhl/stats/json/PlayerSeasonStats/${SEASON}`,
-      { headers: { "Ocp-Apim-Subscription-Key": SPORTSDATAIO_API_KEY } }
-    );
-    if (!res.ok) throw new Error(`SportsDataIO error ${res.status}`);
-    const allStats: any[] = await res.json();
-
-    // Build a quick index by PlayerID for O(1) lookups
-    const byId = new Map<string, any>();
-    for (const s of allStats) {
-      if (s && s.PlayerID != null) byId.set(String(s.PlayerID), s);
-    }
-
-    // 3) Prepare updates by matching nhl_player_id -> PlayerID
-    const updates: { player_id: string; goals: number; assists: number; total_points: number }[] = [];
-    let unmatched = 0;
-
-    for (const row of players) {
-      const key = String(row.nhl_player_id);
-      const stat = byId.get(key);
-      if (!stat) {
-        unmatched++;
-        continue;
-      }
-      const goals = Number(stat.Goals ?? 0);
-      const assists = Number(stat.Assists ?? 0);
-      updates.push({
-        player_id: row.player_id,
-        goals,
-        assists,
-        total_points: goals + assists,
+    const rows = need.data || [];
+    if (!rows.length) {
+      return new Response(JSON.stringify({ ok: true, updated: 0, note: "No players need IDs" }), {
+        headers: { "content-type": "application/json" },
       });
     }
 
-    // 4) Persist to pp_players (assumes columns exist)
-    let updated = 0;
-    for (const u of updates) {
-      const { error: uErr } = await supabase
-        .from("pp_players")
-        .update({
-          goals: u.goals,
-          assists: u.assists,
-          total_points: u.total_points,
-        })
-        .eq("player_id", u.player_id);
-      if (!uErr) updated++;
+    // Fetch SportsDataIO directory once
+    const resp = await fetch(
+      "https://api.sportsdata.io/v3/nhl/scores/json/Players?key=" +
+        encodeURIComponent(SPORTSDATAIO_API_KEY),
+      { cache: "no-store" }
+    );
+    if (!resp.ok) {
+      return new Response(JSON.stringify({ error: "SportsDataIO error " + resp.status }), {
+        status: 502, headers: { "content-type": "application/json" },
+      });
+    }
+    const sd: any[] = await resp.json();
+
+    // Index by last name
+    const byLast = new Map<string, any[]>();
+    for (const p of sd) {
+      const ln = norm(p?.LastName || "");
+      if (!byLast.has(ln)) byLast.set(ln, []);
+      byLast.get(ln)!.push(p);
     }
 
-    return NextResponse.json({ ok: true, updated, unmatched, scanned: players.length });
-  } catch (err: any) {
-    return NextResponse.json({ error: err?.message ?? "unknown error" }, { status: 500 });
+    // Match + UPDATE (no upsert)
+    let updated = 0;
+    const review: any[] = [];
+
+    for (const r of rows) {
+      const full = r.full_name || r.player_id;
+      const toks = nameTokens(full);
+      const last = toks[toks.length - 1];
+      const candidates = byLast.get(last) || [];
+
+      let best: any = null;
+      let bestScore = -1;
+
+      const scan = (arr: any[]) => {
+        for (const c of arr) {
+          const cand =
+            c?.CommonName && c.CommonName.length
+              ? c.CommonName
+              : `${c?.FirstName || ""} ${c?.LastName || ""}`.trim();
+          const s = scoreNameMatch(full, cand);
+          if (s > bestScore) {
+            best = c;
+            bestScore = s;
+          }
+        }
+      };
+
+      if (candidates.length) scan(candidates);
+      if (!best && sd.length) scan(sd);
+
+      if (best && bestScore >= 0.6) {
+        // UPDATE ONLY this row’s nhl_player_id; do not touch full_name/etc.
+        const { error } = await supabase
+          .from("pp_players")
+          .update({ nhl_player_id: String(best.PlayerID) })
+          .eq("player_id", r.player_id);
+
+        if (!error) updated++;
+
+        review.push({
+          player_id: r.player_id,
+          full_name: full,
+          matched_name: `${best?.FirstName || ""} ${best?.LastName || ""}`.trim(),
+          playerId: best?.PlayerID ?? null,
+          team: best?.Team ?? null,
+          pos: best?.Position ?? null,
+          score: Number(bestScore.toFixed(2)),
+          saved: !error,
+          err: error?.message || null,
+        });
+      } else {
+        review.push({
+          player_id: r.player_id,
+          full_name: full,
+          matched_name: null,
+          playerId: null,
+          team: null,
+          pos: null,
+          score: Number(bestScore.toFixed(2)),
+          saved: false,
+          err: null,
+        });
+      }
+    }
+
+    return new Response(JSON.stringify({ ok: true, updated, review }), {
+      headers: { "content-type": "application/json" },
+    });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e?.message || "unknown error" }), {
+      status: 500, headers: { "content-type": "application/json" },
+    });
   }
 }
