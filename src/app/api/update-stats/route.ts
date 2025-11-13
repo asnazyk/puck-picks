@@ -1,13 +1,15 @@
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-import type { NextRequest } from "next/server";
+import { headers } from "next/headers";
+import { NextResponse } from "next/server";
+import { verifySignature } from "@upstash/qstash/dist/nextjs";
 import { GET as seasonSyncGET } from "../nhl-sync/season/route";
 
 /**
- * This route is called by the existing Vercel cron job (/api/update-stats).
- * It simply reuses the NHL season sync handler so both paths do the same thing.
+ * Secure route that accepts only valid Upstash QStash requests.
  */
-export async function GET(_req: NextRequest) {
+export const GET = verifySignature(async () => {
+  // Directly call the NHL season sync
   return seasonSyncGET();
-}
+});
