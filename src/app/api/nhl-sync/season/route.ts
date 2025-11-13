@@ -24,7 +24,7 @@ export async function GET() {
 
     const players = await res.json();
 
-    // IMPORTANT: Do NOT insert points; it is a generated column in your DB
+    // Do NOT insert points; it's a generated column in your DB
     const formatted = players.map((p: any) => ({
       nhl_player_id: String(p.PlayerID),
       games: p.Games ?? 0,
