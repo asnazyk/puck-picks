@@ -33,7 +33,11 @@ export async function GET() {
     const players = await res.json();
 
     const formatted = players.map((p: any) => ({
+      // REQUIRED by your table (NOT NULL):
+      season: toInt(p.Season ?? 2025),
+
       nhl_player_id: String(p.PlayerID),
+
       // All numeric fields sanitized to plain integers
       games: toInt(p.Games),
       goals: toInt(p.Goals),
@@ -41,6 +45,7 @@ export async function GET() {
       pim: toInt(p.PenaltyMinutes),
       shots: toInt(p.ShotsOnGoal),
       plusminus: toInt(p.PlusMinus),
+
       // DO NOT send "points" – it's a generated column in your DB
       updated_at: new Date().toISOString()
     }));
