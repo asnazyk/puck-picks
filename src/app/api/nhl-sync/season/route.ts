@@ -12,43 +12,42 @@ export async function GET() {
   const supabase = createClient(SUPABASE_URL, SRV);
 
   try {
-    // Fetch players from SportsDataIO
-    const res = await fetch(
-      `https://api.sportsdata.io/v3/nhl/stats/json/PlayerSeasonStatsBySeason/2025?key=${API_KEY}`,
-      { cache: "no-store" }
-    );
+    // Correct, validated SportsDataIO endpoint
+    const url = `https://api.sportsdata.io/v3/nhl/stats/json/PlayerSeasonStats/2025?key=${API_KEY}`;
+
+    const res = await fetch(url, { cache: "no-store" });
 
     if (!res.ok) {
       return NextResponse.json(
         { error: "SportsDataIO request failed", status: res.status },
-        { status: 500 }
+        { status: res.status }
       );
     }
 
     const players = await res.json();
 
-    // Insert/upsert into Supabase
-    const { error } = await supabase.from("nhl_player_season_stats").upsert(
-      players.map((p: any) => ({
-        nhl_player_id: String(p.PlayerID),
-        games: p.Games ?? 0,
-        goals: p.Goals ?? 0,
-        assists: p.Assists ?? 0,
-        points: p.Points ?? 0,
-        pim: p.PenaltyMinutes ?? 0,
-        shots: p.ShotsOnGoal ?? 0,
-        plusminus: p.PlusMinus ?? 0,
-        updated_at: new Date().toISOString()
-      })),
-      { onConflict: "nhl_player_id" }
-    );
+    const formatted = players.map((p: any) => ({
+      nhl_player_id: String(p.PlayerID),
+      games: p.Games ?? 0,
+      goals: p.Goals ?? 0,
+      assists: p.Assists ?? 0,
+      points: p.Points ?? 0,
+      pim: p.PenaltyMinutes ?? 0,
+      shots: p.ShotsOnGoal ?? 0,
+      plusminus: p.PlusMinus ?? 0,
+      updated_at: new Date().toISOString()
+    }));
+
+    const { error } = await supabase
+      .from("nhl_player_season_stats")
+      .upsert(formatted, { onConflict: "nhl_player_id" });
 
     if (error) {
       return NextResponse.json({ error }, { status: 500 });
     }
 
-    return NextResponse.json({ ok: true, count: players.length });
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    return NextResponse.json({ ok: true, count: formatted.length });
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
