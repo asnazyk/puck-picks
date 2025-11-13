@@ -1,45 +1,13 @@
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { GET as seasonSyncGET } from "../nhl-sync/season/route";
 
-const BASE_URL =
-  process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : process.env.NEXT_PUBLIC_SITE_URL || "https://puck-picks.vercel.app";
-
-export async function GET() {
-  try {
-    // Hit the season sync route in the same deployment
-    const seasonRes = await fetch(`${BASE_URL}/api/nhl-sync/season`, {
-      cache: "no-store",
-    });
-
-    const seasonJson = await seasonRes.json();
-
-    if (!seasonRes.ok) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "Season sync failed",
-          season: seasonJson,
-        },
-        { status: 500 }
-      );
-    }
-
-    // In the future we can add weekly sync here too
-    return NextResponse.json({
-      ok: true,
-      season: seasonJson,
-    });
-  } catch (err: any) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: err?.message || "Unexpected error in /api/update-stats",
-      },
-      { status: 500 }
-    );
-  }
+/**
+ * This route is called by the existing Vercel cron job (/api/update-stats).
+ * It simply reuses the NHL season sync handler so both paths do the same thing.
+ */
+export async function GET(_req: NextRequest) {
+  return seasonSyncGET();
 }
