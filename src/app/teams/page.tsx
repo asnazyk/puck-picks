@@ -1,143 +1,116 @@
-// src/app/teams/rosters/page.tsx
-type PlayerRow = {
-  player_id: string
-  full_name: string
-  position: string | null
-  team_abbr: string | null
-}
+'use client';
 
-type RosterJoin = {
-  user_id: string
-  player_id: string
-}
+import { useEffect, useState } from 'react';
+import { createClient } from '@supabase/supabase-js';
 
-type UsersPublicRow = {
-  user_id: string
-  display_name: string
-}
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
-const SUPA_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const SUPA_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+type RosterRow = {
+  user_id: string;
+  manager_name: string;
+  player_id: number;
+  player: {
+    nhl_player_id: string;
+    full_name: string;
+    position: string;
+    team: string;
+  };
+  season_stats: {
+    games: number | null;
+    goals: number | null;
+    assists: number | null;
+    points: number | null;
+    pim: number | null;
+    shots: number | null;
+    plusminus: number | null;
+  } | null;
+};
 
-async function fetchRosters(): Promise<RosterJoin[]> {
-  const url = `${SUPA_URL}/rest/v1/pp_team_rosters?select=user_id,player_id&active=eq.true`
-  const res = await fetch(url, {
-    headers: { apikey: SUPA_ANON, Authorization: `Bearer ${SUPA_ANON}` },
-    cache: "no-store",
-  })
-  if (!res.ok) {
-    console.error("Failed to fetch pp_team_rosters:", await res.text())
-    return []
-  }
-  return (await res.json()) as RosterJoin[]
-}
+export default function TeamsPage() {
+  const [rows, setRows] = useState<RosterRow[]>([]);
+  const [loading, setLoading] = useState(true);
 
-async function fetchPlayersByIds(ids: string[]): Promise<Record<string, PlayerRow>> {
-  if (ids.length === 0) return {}
-  const out: Record<string, PlayerRow> = {}
-  const chunk = 200
-  for (let i = 0; i < ids.length; i += chunk) {
-    const sub = ids.slice(i, i + chunk)
-    const inList = "(" + sub.map((id) => `"${id.replace(/"/g, '""')}"`).join(",") + ")"
-    const url = `${SUPA_URL}/rest/v1/pp_players?select=player_id,full_name,position,team_abbr&player_id=in.${encodeURIComponent(inList)}`
-    const res = await fetch(url, {
-      headers: { apikey: SUPA_ANON, Authorization: `Bearer ${SUPA_ANON}` },
-      cache: "no-store",
-    })
-    if (!res.ok) {
-      console.error("Failed to fetch pp_players:", await res.text())
-      continue
+  useEffect(() => {
+    async function load() {
+      const { data, error } = await supabase
+        .from('v_pp_rosters_ytd')
+        .select('*')
+        .order('manager_name', { ascending: true });
+
+      if (!error && data) {
+        setRows(data as any);
+      }
+
+      setLoading(false);
     }
-    const rows = (await res.json()) as PlayerRow[]
-    rows.forEach((r) => (out[r.player_id] = r))
-  }
-  return out
-}
 
-async function fetchUsersPublic(): Promise<Record<string, string>> {
-  const url = `${SUPA_URL}/rest/v1/users_public?select=user_id,display_name`
-  const res = await fetch(url, {
-    headers: { apikey: SUPA_ANON, Authorization: `Bearer ${SUPA_ANON}` },
-    cache: "no-store",
-  })
-  if (!res.ok) {
-    console.error("Failed to fetch users_public:", await res.text())
-    return {}
-  }
-  const rows = (await res.json()) as UsersPublicRow[]
-  const map: Record<string, string> = {}
-  rows.forEach((r) => (map[r.user_id] = r.display_name))
-  return map
-}
+    load();
+  }, []);
 
-export default async function TeamsRostersPage() {
-  const roster = await fetchRosters()
-
-  const byUser: Record<string, string[]> = {}
-  for (const row of roster) {
-    if (!byUser[row.user_id]) byUser[row.user_id] = []
-    byUser[row.user_id].push(row.player_id)
+  if (loading) {
+    return (
+      <div className="p-8 text-white text-xl">
+        Loading team rosters…
+      </div>
+    );
   }
 
-  const allIds = Array.from(new Set(roster.map((r) => r.player_id)))
-  const playersById = await fetchPlayersByIds(allIds)
-  const nameMap = await fetchUsersPublic()
-
-  const userBlocks = Object.entries(byUser).map(([userId, pids]) => {
-    const displayName = nameMap[userId] || userId
-    const playerRows = pids
-      .map((pid) => playersById[pid])
-      .filter(Boolean)
-      .sort((a, b) => a.full_name.localeCompare(b.full_name))
-    return { userId, displayName, playerRows }
-  })
-
-  userBlocks.sort((a, b) => a.displayName.localeCompare(b.displayName))
+  // Group players by manager
+  const managers: Record<string, RosterRow[]> = {};
+  rows.forEach((row) => {
+    if (!managers[row.manager_name]) managers[row.manager_name] = [];
+    managers[row.manager_name].push(row);
+  });
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-8">
-      <header className="mb-8 flex items-end justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Team Rosters</h1>
-          <p className="text-sm text-gray-500">Drafted rosters (active)</p>
-        </div>
-        <a href="/teams" className="text-sm underline underline-offset-4 hover:opacity-80">
-          ← Back to Teams
-        </a>
-      </header>
+    <div className="p-8 text-white">
+      <h1 className="text-4xl font-bold mb-8">Teams</h1>
 
-      {userBlocks.length === 0 ? (
-        <div className="rounded-xl border p-6 text-sm text-gray-600">
-          No active rosters found. Once you insert rows into <code>pp_team_rosters</code>, they will appear here automatically.
-        </div>
-      ) : (
-        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {userBlocks.map(({ userId, displayName, playerRows }) => (
-            <section key={userId} className="rounded-2xl border shadow-sm">
-              <div className="border-b px-4 py-3">
-                <h2 className="truncate text-lg font-semibold">{displayName}</h2>
-                <p className="text-xs text-gray-500">{userId}</p>
-              </div>
-              <ul className="divide-y">
-                {playerRows.length === 0 ? (
-                  <li className="px-4 py-3 text-sm text-gray-500">No active players</li>
-                ) : (
-                  playerRows.map((p) => (
-                    <li key={p.player_id} className="px-4 py-2.5 text-sm">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="truncate">{p.full_name}</span>
-                        <span className="shrink-0 tabular-nums text-gray-500">
-                          {p.position ?? "-"} {p.team_abbr ? `· ${p.team_abbr}` : ""}
-                        </span>
-                      </div>
-                    </li>
-                  ))
-                )}
-              </ul>
-            </section>
-          ))}
-        </div>
-      )}
-    </main>
-  )
+      <div className="space-y-10">
+        {Object.entries(managers).map(([manager, players]) => (
+          <div key={manager} className="bg-[#111] p-6 rounded-xl shadow-lg border border-gray-700">
+            <h2 className="text-2xl mb-4 font-semibold">{manager}</h2>
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-gray-700 text-gray-400">
+                  <th className="py-2">Player</th>
+                  <th className="py-2">Team</th>
+                  <th className="py-2">Pos</th>
+                  <th className="py-2 text-right">G</th>
+                  <th className="py-2 text-right">A</th>
+                  <th className="py-2 text-right">PTS</th>
+                  <th className="py-2 text-right">GP</th>
+                </tr>
+              </thead>
+              <tbody>
+                {players.map((row) => {
+                  const stats = row.season_stats || {
+                    goals: 0,
+                    assists: 0,
+                    points: 0,
+                    games: 0
+                  };
+
+                  return (
+                    <tr key={row.player_id} className="border-b border-gray-800">
+                      <td className="py-2">{row.player.full_name}</td>
+                      <td>{row.player.team}</td>
+                      <td>{row.player.position}</td>
+                      <td className="text-right">{stats.goals ?? 0}</td>
+                      <td className="text-right">{stats.assists ?? 0}</td>
+                      <td className="text-right">{stats.points ?? 0}</td>
+                      <td className="text-right">{stats.games ?? 0}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
