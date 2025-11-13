@@ -15,8 +15,6 @@ type SeasonStats = {
 type PlayerJson = {
   nhl_player_id: string;
   full_name: string;
-  position?: string;
-  team?: string;
   [key: string]: any;
 };
 
@@ -27,14 +25,6 @@ type RosterRow = {
   player: PlayerJson;
   season_stats: SeasonStats | null;
 };
-
-function firstNonEmpty(...vals: any[]): string {
-  for (const v of vals) {
-    const s = (v ?? '').toString().trim();
-    if (s) return s;
-  }
-  return '';
-}
 
 export default function TeamsPage() {
   const [rows, setRows] = useState<RosterRow[]>([]);
@@ -99,54 +89,31 @@ export default function TeamsPage() {
                   const goals =
                     stats.goals ??
                     stats.Goals ??
-                    stats.g ??
-                    stats.G ??
                     0;
 
                   const assists =
                     stats.assists ??
                     stats.Assists ??
-                    stats.a ??
-                    stats.A ??
                     0;
 
                   const points =
                     stats.points ??
                     stats.Points ??
-                    stats.pts ??
-                    stats.Pts ??
-                    (goals + assists);
+                    goals + assists;
 
                   const games =
                     stats.games ??
                     stats.Games ??
-                    stats.gp ??
-                    stats.GP ??
                     0;
 
-                  // TEAM + POSITION DISPLAY
-                  const teamRaw = firstNonEmpty(
-                    row.player.team,
-                    (row.player as any).nhl_team,
-                    (row.player as any).team_abbr,
-                    (row.player as any).Team,
-                    stats.Team,
-                    stats.TeamAbbr
-                  );
-
+                  // TEAM + POSITION DISPLAY driven from season_stats
+                  const teamRaw = (stats.team ?? stats.Team ?? '').toString().trim();
                   const teamAbbr = teamRaw
                     ? teamRaw.slice(0, 3).toUpperCase()
                     : '---';
 
-                  const posRaw = firstNonEmpty(
-                    row.player.position,
-                    (row.player as any).pos,
-                    (row.player as any).Position,
-                    stats.Position
-                  ).toUpperCase();
-
-                  // Treat anything containing "D" as defense, otherwise forward
-                  const posShort = posRaw.includes('D') ? 'D' : 'F';
+                  const posRaw = (stats.position ?? stats.Position ?? '').toString().toUpperCase();
+                  const posShort = posRaw.startsWith('D') ? 'D' : 'F';
 
                   const displayName = `${row.player.full_name} (${teamAbbr}, ${posShort})`;
 
