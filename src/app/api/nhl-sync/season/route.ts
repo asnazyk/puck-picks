@@ -12,9 +12,7 @@ export async function GET() {
   const supabase = createClient(SUPABASE_URL, SRV);
 
   try {
-    // Correct, validated SportsDataIO endpoint
     const url = `https://api.sportsdata.io/v3/nhl/stats/json/PlayerSeasonStats/2025?key=${API_KEY}`;
-
     const res = await fetch(url, { cache: "no-store" });
 
     if (!res.ok) {
@@ -26,12 +24,12 @@ export async function GET() {
 
     const players = await res.json();
 
+    // IMPORTANT: Do NOT insert points; it is a generated column in your DB
     const formatted = players.map((p: any) => ({
       nhl_player_id: String(p.PlayerID),
       games: p.Games ?? 0,
       goals: p.Goals ?? 0,
       assists: p.Assists ?? 0,
-      points: p.Points ?? 0,
       pim: p.PenaltyMinutes ?? 0,
       shots: p.ShotsOnGoal ?? 0,
       plusminus: p.PlusMinus ?? 0,
