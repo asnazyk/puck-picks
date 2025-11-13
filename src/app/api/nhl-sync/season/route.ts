@@ -15,12 +15,14 @@ function toInt(v: any): number {
   return n;
 }
 
+// Use the *current* NHL season end-year (2025-26 => 2026)
+const SEASON_YEAR = 2026;
+
 export async function GET() {
   const supabase = createClient(SUPABASE_URL, SRV);
 
   try {
-    // Season stats endpoint
-    const url = `https://api.sportsdata.io/v3/nhl/stats/json/PlayerSeasonStats/2025?key=${API_KEY}`;
+    const url = `https://api.sportsdata.io/v3/nhl/stats/json/PlayerSeasonStats/${SEASON_YEAR}?key=${API_KEY}`;
     const res = await fetch(url, { cache: "no-store" });
 
     if (!res.ok) {
@@ -34,7 +36,7 @@ export async function GET() {
 
     const formatted = players.map((p: any) => ({
       // REQUIRED by your table (NOT NULL):
-      season: toInt(p.Season ?? 2025),
+      season: toInt(p.Season ?? SEASON_YEAR),
 
       nhl_player_id: String(p.PlayerID),
 
