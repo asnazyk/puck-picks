@@ -2,30 +2,19 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import type { NextRequest } from "next/server";
-import { NextResponse } from "next/server";
 import { GET as seasonSyncGET } from "../nhl-sync/season/route";
 
-const QSTASH_TOKEN = process.env.QSTASH_TOKEN;
+/**
+ * QStash (and you) can call this endpoint.
+ * It just reuses the NHL season sync logic.
+ */
 
-function isAuthorized(req: NextRequest): boolean {
-  const token =
-    req.headers.get("Upstash-Token") ??
-    req.headers.get("upstash-token") ??
-    "";
-  return token === QSTASH_TOKEN;
-}
-
-// Accept GET and POST from QStash
-export async function GET(req: NextRequest) {
-  if (!isAuthorized(req)) {
-    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 403 });
-  }
+// For manual GET calls (browser, etc.)
+export async function GET(_req: NextRequest) {
   return seasonSyncGET();
 }
 
-export async function POST(req: NextRequest) {
-  if (!isAuthorized(req)) {
-    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 403 });
-  }
+// For QStash POST calls (default behavior in their UI)
+export async function POST(_req: NextRequest) {
   return seasonSyncGET();
 }
