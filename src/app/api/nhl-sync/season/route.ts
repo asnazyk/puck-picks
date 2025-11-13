@@ -8,10 +8,18 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SRV = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const API_KEY = process.env.SPORTSDATAIO_API_KEY!;
 
+// Force any incoming value into a safe integer (no decimals, no NaN)
+function toInt(v: any): number {
+  const n = parseInt(String(v ?? "0"), 10);
+  if (Number.isNaN(n)) return 0;
+  return n;
+}
+
 export async function GET() {
   const supabase = createClient(SUPABASE_URL, SRV);
 
   try {
+    // Season stats endpoint
     const url = `https://api.sportsdata.io/v3/nhl/stats/json/PlayerSeasonStats/2025?key=${API_KEY}`;
     const res = await fetch(url, { cache: "no-store" });
 
@@ -24,15 +32,16 @@ export async function GET() {
 
     const players = await res.json();
 
-    // Do NOT insert points; it's a generated column in your DB
     const formatted = players.map((p: any) => ({
       nhl_player_id: String(p.PlayerID),
-      games: p.Games ?? 0,
-      goals: p.Goals ?? 0,
-      assists: p.Assists ?? 0,
-      pim: p.PenaltyMinutes ?? 0,
-      shots: p.ShotsOnGoal ?? 0,
-      plusminus: p.PlusMinus ?? 0,
+      // All numeric fields sanitized to plain integers
+      games: toInt(p.Games),
+      goals: toInt(p.Goals),
+      assists: toInt(p.Assists),
+      pim: toInt(p.PenaltyMinutes),
+      shots: toInt(p.ShotsOnGoal),
+      plusminus: toInt(p.PlusMinus),
+      // DO NOT send "points" – it's a generated column in your DB
       updated_at: new Date().toISOString()
     }));
 
