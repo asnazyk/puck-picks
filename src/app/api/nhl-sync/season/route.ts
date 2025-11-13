@@ -40,6 +40,10 @@ export async function GET() {
 
       nhl_player_id: String(p.PlayerID),
 
+      // NEW: store team + position so UI can read them
+      team: (p.Team ?? "").toString(),
+      position: (p.Position ?? "").toString(),
+
       // All numeric fields sanitized to plain integers
       games: toInt(p.Games),
       goals: toInt(p.Goals),
