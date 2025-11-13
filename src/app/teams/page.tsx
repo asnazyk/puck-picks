@@ -15,8 +15,9 @@ type SeasonStats = {
 type PlayerJson = {
   nhl_player_id: string;
   full_name: string;
-  position: string;
-  team: string;
+  position?: string;
+  team?: string;
+  [key: string]: any;
 };
 
 type RosterRow = {
@@ -27,14 +28,12 @@ type RosterRow = {
   season_stats: SeasonStats | null;
 };
 
-function formatTeamPos(player: PlayerJson): string {
-  const team = (player.team || '').slice(0, 3).toUpperCase();
-
-  const rawPos = (player.position || '').toUpperCase();
-  // Treat anything with "D" as defense, everything else as forward
-  const pos = rawPos.includes('D') && !rawPos.includes('F') ? 'D' : 'F';
-
-  return `${player.full_name} (${team}, ${pos})`;
+function firstNonEmpty(...vals: any[]): string {
+  for (const v of vals) {
+    const s = (v ?? '').toString().trim();
+    if (s) return s;
+  }
+  return '';
 }
 
 export default function TeamsPage() {
@@ -116,7 +115,7 @@ export default function TeamsPage() {
                     stats.Points ??
                     stats.pts ??
                     stats.Pts ??
-                    0;
+                    (goals + assists);
 
                   const games =
                     stats.games ??
@@ -125,10 +124,36 @@ export default function TeamsPage() {
                     stats.GP ??
                     0;
 
+                  // TEAM + POSITION DISPLAY
+                  const teamRaw = firstNonEmpty(
+                    row.player.team,
+                    (row.player as any).nhl_team,
+                    (row.player as any).team_abbr,
+                    (row.player as any).Team,
+                    stats.Team,
+                    stats.TeamAbbr
+                  );
+
+                  const teamAbbr = teamRaw
+                    ? teamRaw.slice(0, 3).toUpperCase()
+                    : '---';
+
+                  const posRaw = firstNonEmpty(
+                    row.player.position,
+                    (row.player as any).pos,
+                    (row.player as any).Position,
+                    stats.Position
+                  ).toUpperCase();
+
+                  // Treat anything containing "D" as defense, otherwise forward
+                  const posShort = posRaw.includes('D') ? 'D' : 'F';
+
+                  const displayName = `${row.player.full_name} (${teamAbbr}, ${posShort})`;
+
                   return (
                     <tr key={row.player_id} className="border-b border-gray-800">
                       <td className="py-2">
-                        {formatTeamPos(row.player)}
+                        {displayName}
                       </td>
                       <td className="text-right">{goals}</td>
                       <td className="text-right">{assists}</td>
