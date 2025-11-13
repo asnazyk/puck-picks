@@ -27,6 +27,16 @@ type RosterRow = {
   season_stats: SeasonStats | null;
 };
 
+function formatTeamPos(player: PlayerJson): string {
+  const team = (player.team || '').slice(0, 3).toUpperCase();
+
+  const rawPos = (player.position || '').toUpperCase();
+  // Treat anything with "D" as defense, everything else as forward
+  const pos = rawPos.includes('D') && !rawPos.includes('F') ? 'D' : 'F';
+
+  return `${player.full_name} (${team}, ${pos})`;
+}
+
 export default function TeamsPage() {
   const [rows, setRows] = useState<RosterRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -77,8 +87,6 @@ export default function TeamsPage() {
               <thead>
                 <tr className="border-b border-gray-700 text-gray-400">
                   <th className="py-2">Player</th>
-                  <th className="py-2">Team</th>
-                  <th className="py-2">Pos</th>
                   <th className="py-2 text-right">G</th>
                   <th className="py-2 text-right">A</th>
                   <th className="py-2 text-right">PTS</th>
@@ -119,9 +127,9 @@ export default function TeamsPage() {
 
                   return (
                     <tr key={row.player_id} className="border-b border-gray-800">
-                      <td className="py-2">{row.player.full_name}</td>
-                      <td>{row.player.team}</td>
-                      <td>{row.player.position}</td>
+                      <td className="py-2">
+                        {formatTeamPos(row.player)}
+                      </td>
                       <td className="text-right">{goals}</td>
                       <td className="text-right">{assists}</td>
                       <td className="text-right">{points}</td>
